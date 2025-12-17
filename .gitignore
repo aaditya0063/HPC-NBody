@@ -1,0 +1,19 @@
+# Ignore Compiled Executables
+bin/
+*.o
+
+# Ignore Large Data Files
+data/
+*.csv
+*.vtk
+*.vtu
+*.bin
+
+# Ignore Slurm Logs
+logs/
+*.out
+*.err
+*.log
+
+# Ignore OS files
+.DS_Store
