@@ -35,7 +35,7 @@ echo "==========================================================================
 
 if [ -f "$BIN" ]; then
     echo "Command: mpirun -np $SLURM_NTASKS $BIN $N $STEPS $BENCH"
-    time mpirun -np $SLURM_NTASKS $BIN $N $STEPS $BENCH
+    time mpirun --bind-to none -x OMP_NUM_THREADS --mca btl tcp,self --mca btl_base_warn_component_unused 0 -np $SLURM_NTASKS numactl --interleave=all $BIN $N $STEPS $BENCH
 else
     echo "ERROR: Binary not found at $BIN"
 fi

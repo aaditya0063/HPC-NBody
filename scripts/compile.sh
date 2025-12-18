@@ -10,7 +10,7 @@ fi
 BASE_DIR=".."
 BIN_DIR="$BASE_DIR/bin"
 SRC_DIR="$BASE_DIR/src"
-FLAGS="-std=c++11 -g -fno-omit-frame-pointer"
+FLAGS="-std=c++11 -g -fno-omit-frame-pointer -march=native -ffast-math"
 
 mkdir -p $BIN_DIR
 

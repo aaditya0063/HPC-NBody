@@ -31,7 +31,7 @@ echo "==========================================================================
 
 if [ -f "$BIN" ]; then
     echo "Running: $BIN $N $STEPS $BENCH"
-    time $BIN $N $STEPS $BENCH
+    numactl --interleave=all time $BIN $N $STEPS $BENCH
 else
     echo "ERROR: Binary not found at $BIN"
 fi
