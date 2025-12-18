@@ -15,7 +15,7 @@ BENCH="true"
 BIN="./bin/nbody_cuda"
 
 # Load modules
-module load cuda/12.0
+module load cuda/11.0
 
 echo "=============================================================================="
 echo "                       HPC N-BODY SIMULATION REPORT                       "

@@ -16,7 +16,7 @@ mkdir -p $BIN_DIR
 
 module purge
 module load openmpi/4.1.1
-module load cuda/12.0
+module load cuda/11.0
 
 export OMPI_MCA_btl=tcp,self
 

@@ -13,7 +13,6 @@ data/
 logs/
 *.out
 *.err
-*.log
 
 # Ignore OS files
 .DS_Store
