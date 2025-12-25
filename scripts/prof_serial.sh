@@ -13,7 +13,7 @@
 # 1. Get N from command line arg, default to 5000 if not provided
 N=${1:-5000}
 STEPS=1000
-MODE="true"
+MODE="bench"
 
 # 2. Define Output Directory with N and Job ID
 RESULT_DIR="vtune_reports/serial_N${N}_ID${SLURM_JOB_ID}"
