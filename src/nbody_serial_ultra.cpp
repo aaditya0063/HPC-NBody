@@ -1,7 +1,10 @@
 #include <iostream>
+#include <fstream>
 #include <cmath>
 #include <cstdlib>
 #include <chrono>
+#include <cstring>
+#include <algorithm>
 #include <immintrin.h>
 
 using namespace std;
@@ -10,28 +13,35 @@ constexpr double DT = 0.001;
 constexpr double G  = 1.0;
 constexpr double SOFT = 0.1;
 constexpr int SEED = 1234;
+// TILE_SIZE: 1024 particles * 32 bytes = 32KB (Fits exactly in L1 Cache)
+constexpr int TILE_SIZE = 1024; 
+
+enum Mode { BENCH, VISUAL };
 
 int main(int argc, char** argv)
 {
+    if(argc < 4) {
+        cerr << "Usage: " << argv[0] << " <N> <STEPS> <bench|visual> [SAVE_INTERVAL]\n";
+        return 1;
+    }
+
     const int N = atoi(argv[1]);
     const int STEPS = atoi(argv[2]);
     const double dt = DT;
 
-    double* __restrict__ x  = (double*) aligned_alloc(64, N*sizeof(double));
-    double* __restrict__ y  = (double*) aligned_alloc(64, N*sizeof(double));
-    double* __restrict__ z  = (double*) aligned_alloc(64, N*sizeof(double));
-    double* __restrict__ vx = (double*) aligned_alloc(64, N*sizeof(double));
-    double* __restrict__ vy = (double*) aligned_alloc(64, N*sizeof(double));
-    double* __restrict__ vz = (double*) aligned_alloc(64, N*sizeof(double));
-    double* __restrict__ m  = (double*) aligned_alloc(64, N*sizeof(double));
+    Mode mode = (strcmp(argv[3], "visual") == 0) ? VISUAL : BENCH;
+    int saveInterval = (mode == VISUAL && argc > 4) ? atoi(argv[4]) : 1;
 
-    __builtin_assume_aligned(x, 64);
-    __builtin_assume_aligned(y, 64);
-    __builtin_assume_aligned(z, 64);
-    __builtin_assume_aligned(vx,64);
-    __builtin_assume_aligned(vy,64);
-    __builtin_assume_aligned(vz,64);
-    __builtin_assume_aligned(m, 64);
+    size_t bytes = N * sizeof(double);
+    if (bytes % 64 != 0) bytes += 64 - (bytes % 64);
+
+    double* __restrict__ x  = (double*) aligned_alloc(64, bytes);
+    double* __restrict__ y  = (double*) aligned_alloc(64, bytes);
+    double* __restrict__ z  = (double*) aligned_alloc(64, bytes);
+    double* __restrict__ vx = (double*) aligned_alloc(64, bytes);
+    double* __restrict__ vy = (double*) aligned_alloc(64, bytes);
+    double* __restrict__ vz = (double*) aligned_alloc(64, bytes);
+    double* __restrict__ m  = (double*) aligned_alloc(64, bytes);
 
     srand(SEED);
     for(int i=0;i<N;i++){
@@ -44,89 +54,143 @@ int main(int argc, char** argv)
         m[i]=rand()/(double)RAND_MAX*0.9+0.1;
     }
 
+    ofstream out;
+    if(mode == VISUAL) {
+        out.open("nbody_output.csv");
+        out << "step,i,x,y,z,vx,vy,vz,m\n";
+    }
+
     auto start = chrono::high_resolution_clock::now();
 
-    for(int step=0; step<STEPS; ++step)
+    const __m512d vSoft = _mm512_set1_pd(SOFT);
+    const __m512d v1p5  = _mm512_set1_pd(1.5);
+    const __m512d vHalf = _mm512_set1_pd(0.5);
+    const __m512d vDt   = _mm512_set1_pd(dt);
+
+    for(int step=0; step<STEPS; step++)
     {
-        for(int i=0;i<N;i++)
+        // --- TILING IMPLEMENTATION ---
+        // We iterate through chunks (tiles) of J to keep them in Cache
+        for(int jj=0; jj < N; jj += TILE_SIZE)
         {
-            const double xi=x[i], yi=y[i], zi=z[i];
-            const double mi=m[i];
-            const double Gmi = G * mi;
+            // Calculate the end of the current tile
+            int j_end = std::min(jj + TILE_SIZE, N);
 
-            double fx0=0, fy0=0, fz0=0;
-            double fx1=0, fy1=0, fz1=0;
-            double fx2=0, fy2=0, fz2=0;
-            double fx3=0, fy3=0, fz3=0;
-
-            int j=0;
-            for(; j<=N-4; j+=4)
+            // Process all i particles against this J-Tile
+            for(int i=0; i<N; i++)
             {
-                __builtin_prefetch(&x[j+32], 0, 1);
-                __builtin_prefetch(&y[j+32], 0, 1);
-                __builtin_prefetch(&z[j+32], 0, 1);
-                __builtin_prefetch(&m[j+32], 0, 1);
+                __m512d v_xi  = _mm512_set1_pd(x[i]);
+                __m512d v_yi  = _mm512_set1_pd(y[i]);
+                __m512d v_zi  = _mm512_set1_pd(z[i]);
+                __m512d v_Gmi = _mm512_set1_pd(G * m[i]);
 
-                double dx0=x[j]-xi,   dy0=y[j]-yi,   dz0=z[j]-zi;
-                double dx1=x[j+1]-xi, dy1=y[j+1]-yi, dz1=z[j+1]-zi;
-                double dx2=x[j+2]-xi, dy2=y[j+2]-yi, dz2=z[j+2]-zi;
-                double dx3=x[j+3]-xi, dy3=y[j+3]-yi, dz3=z[j+3]-zi;
+                __m512d fx0=_mm512_setzero_pd(), fy0=_mm512_setzero_pd(), fz0=_mm512_setzero_pd();
+                __m512d fx1=_mm512_setzero_pd(), fy1=_mm512_setzero_pd(), fz1=_mm512_setzero_pd();
 
-                double r20 = dx0*dx0 + dy0*dy0 + dz0*dz0 + SOFT;
-                double r21 = dx1*dx1 + dy1*dy1 + dz1*dz1 + SOFT;
-                double r22 = dx2*dx2 + dy2*dy2 + dz2*dz2 + SOFT;
-                double r23 = dx3*dx3 + dy3*dy3 + dz3*dz3 + SOFT;
+                int j = jj;
+                // Unrolled Loop (2x) inside the Tile
+                // Ensure we don't go past the end of the tile (j_end)
+                for(; j <= j_end - 16; j+=16)
+                {
+                    // Prefetch within the tile
+                    _mm_prefetch((char*)&x[j+64], _MM_HINT_T0);
+                    _mm_prefetch((char*)&y[j+64], _MM_HINT_T0);
+                    _mm_prefetch((char*)&z[j+64], _MM_HINT_T0);
+                    _mm_prefetch((char*)&m[j+64], _MM_HINT_T0);
 
-                double inv0 = 1.0 / __builtin_sqrt(r20);
-                double inv1 = 1.0 / __builtin_sqrt(r21);
-                double inv2 = 1.0 / __builtin_sqrt(r22);
-                double inv3 = 1.0 / __builtin_sqrt(r23);
+                    __m512d x0=_mm512_load_pd(&x[j]);   __m512d x1=_mm512_load_pd(&x[j+8]);
+                    __m512d y0=_mm512_load_pd(&y[j]);   __m512d y1=_mm512_load_pd(&y[j+8]);
+                    __m512d z0=_mm512_load_pd(&z[j]);   __m512d z1=_mm512_load_pd(&z[j+8]);
+                    __m512d m0=_mm512_load_pd(&m[j]);   __m512d m1=_mm512_load_pd(&m[j+8]);
 
-                double inv30 = inv0*inv0*inv0;
-                double inv31 = inv1*inv1*inv1;
-                double inv32 = inv2*inv2*inv2;
-                double inv33 = inv3*inv3*inv3;
+                    __m512d dx0=_mm512_sub_pd(x0,v_xi); __m512d dx1=_mm512_sub_pd(x1,v_xi);
+                    __m512d dy0=_mm512_sub_pd(y0,v_yi); __m512d dy1=_mm512_sub_pd(y1,v_yi);
+                    __m512d dz0=_mm512_sub_pd(z0,v_zi); __m512d dz1=_mm512_sub_pd(z1,v_zi);
 
-                double f0 = Gmi * m[j]   * inv30;
-                double f1 = Gmi * m[j+1] * inv31;
-                double f2 = Gmi * m[j+2] * inv32;
-                double f3 = Gmi * m[j+3] * inv33;
+                    __m512d r20 = _mm512_fmadd_pd(dx0,dx0,vSoft);
+                    r20 = _mm512_fmadd_pd(dy0,dy0,r20);
+                    r20 = _mm512_fmadd_pd(dz0,dz0,r20);
 
-                fx0 += f0*dx0; fy0 += f0*dy0; fz0 += f0*dz0;
-                fx1 += f1*dx1; fy1 += f1*dy1; fz1 += f1*dz1;
-                fx2 += f2*dx2; fy2 += f2*dy2; fz2 += f2*dz2;
-                fx3 += f3*dx3; fy3 += f3*dy3; fz3 += f3*dz3;
+                    __m512d r21 = _mm512_fmadd_pd(dx1,dx1,vSoft);
+                    r21 = _mm512_fmadd_pd(dy1,dy1,r21);
+                    r21 = _mm512_fmadd_pd(dz1,dz1,r21);
+
+                    __m512d inv0 = _mm512_rsqrt14_pd(r20);
+                    __m512d inv1 = _mm512_rsqrt14_pd(r21);
+
+                    // Newton-Raphson
+                    __m512d t0 = _mm512_mul_pd(r20, _mm512_mul_pd(inv0, inv0));
+                    t0 = _mm512_fnmadd_pd(vHalf, t0, v1p5); 
+                    inv0 = _mm512_mul_pd(inv0, t0);
+
+                    __m512d t1 = _mm512_mul_pd(r21, _mm512_mul_pd(inv1, inv1));
+                    t1 = _mm512_fnmadd_pd(vHalf, t1, v1p5);
+                    inv1 = _mm512_mul_pd(inv1, t1);
+
+                    __m512d inv30 = _mm512_mul_pd(inv0,_mm512_mul_pd(inv0,inv0));
+                    __m512d inv31 = _mm512_mul_pd(inv1,_mm512_mul_pd(inv1,inv1));
+
+                    __m512d f0 = _mm512_mul_pd(_mm512_mul_pd(v_Gmi,m0),inv30);
+                    __m512d f1 = _mm512_mul_pd(_mm512_mul_pd(v_Gmi,m1),inv31);
+
+                    fx0 = _mm512_fmadd_pd(f0,dx0,fx0); fx1 = _mm512_fmadd_pd(f1,dx1,fx1);
+                    fy0 = _mm512_fmadd_pd(f0,dy0,fy0); fy1 = _mm512_fmadd_pd(f1,dy1,fy1);
+                    fz0 = _mm512_fmadd_pd(f0,dz0,fz0); fz1 = _mm512_fmadd_pd(f1,dz1,fz1);
+                }
+
+                double fx = _mm512_reduce_add_pd(_mm512_add_pd(fx0,fx1));
+                double fy = _mm512_reduce_add_pd(_mm512_add_pd(fy0,fy1));
+                double fz = _mm512_reduce_add_pd(_mm512_add_pd(fz0,fz1));
+
+                // Cleanup loop for this tile
+                for(; j < j_end; j++){
+                    double dx=x[j]-x[i], dy=y[j]-y[i], dz=z[j]-z[i];
+                    double r2=dx*dx+dy*dy+dz*dz+SOFT;
+                    double inv=1.0/sqrt(r2);
+                    double inv3=inv*inv*inv;
+                    double f=G*m[i]*m[j]*inv3;
+                    fx+=f*dx; fy+=f*dy; fz+=f*dz;
+                }
+
+                // --- INCREMENTAL VELOCITY UPDATE ---
+                // We update velocity 'partially' for every tile.
+                // v_new = v_old + (F_tile * dt / m)
+                double invMdt = dt/m[i];
+                vx[i] += fx * invMdt;
+                vy[i] += fy * invMdt;
+                vz[i] += fz * invMdt;
             }
+        }
 
-            double fx = fx0+fx1+fx2+fx3;
-            double fy = fy0+fy1+fy2+fy3;
-            double fz = fz0+fz1+fz2+fz3;
+        // Vectorized Position Update
+        int i=0;
+        for(; i<=N-8; i+=8) {
+            __m512d v_x  = _mm512_load_pd(&x[i]);
+            __m512d v_y  = _mm512_load_pd(&y[i]);
+            __m512d v_z  = _mm512_load_pd(&z[i]);
+            __m512d v_vx = _mm512_load_pd(&vx[i]);
+            __m512d v_vy = _mm512_load_pd(&vy[i]);
+            __m512d v_vz = _mm512_load_pd(&vz[i]);
 
-            for(; j<N; j++){
-                double dx=x[j]-xi, dy=y[j]-yi, dz=z[j]-zi;
-                double r2 = dx*dx + dy*dy + dz*dz + SOFT;
-                double inv = 1.0 / __builtin_sqrt(r2);
-                double inv3 = inv*inv*inv;
-                double f = Gmi * m[j] * inv3;
-                fx += f*dx; fy += f*dy; fz += f*dz;
-            }
+            _mm512_store_pd(&x[i], _mm512_fmadd_pd(v_vx, vDt, v_x));
+            _mm512_store_pd(&y[i], _mm512_fmadd_pd(v_vy, vDt, v_y));
+            _mm512_store_pd(&z[i], _mm512_fmadd_pd(v_vz, vDt, v_z));
+        }
+        for(; i<N; i++) {
+            x[i]+=vx[i]*dt;
+            y[i]+=vy[i]*dt;
+            z[i]+=vz[i]*dt;
+        }
 
-            const double invMdt = dt / mi;
-            vx[i] += fx * invMdt;
-            vy[i] += fy * invMdt;
-            vz[i] += fz * invMdt;
-
-            x[i] += vx[i] * dt;
-            y[i] += vy[i] * dt;
-            z[i] += vz[i] * dt;
+        if(mode==VISUAL && step%saveInterval==0){
+            for(int k=0;k<N;k++)
+                out<<step<<","<<k<<","<<x[k]<<","<<y[k]<<","<<z[k]<<","<<vx[k]<<","<<vy[k]<<","<<vz[k]<<","<<m[k]<<"\n";
         }
     }
 
-    auto end = chrono::high_resolution_clock::now();
-    double t = chrono::duration<double>(end-start).count();
-
-    double ops = double(N)*N*20.0*STEPS;
-    cout << "Time: " << t << " s\n";
-    cout << "GFLOPs: " << (ops/t)/1e9 << "\n";
+    auto end=chrono::high_resolution_clock::now();
+    double t=chrono::duration<double>(end-start).count();
+    double ops=(double)N*N*20*STEPS;
+    cout<<"Time: "<<t<<" s\n";
+    cout<<"GFLOPs: "<<(ops/t)/1e9<<"\n";
 }
-
