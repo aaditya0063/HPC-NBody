@@ -13,48 +13,47 @@ MPICXX   = mpicxx
 NVCC     = nvcc
 
 # --- Architecture Flags ---
-# OPTION 1: Explicitly target your Compute Node (Best for compiling on Login Node)
-# Use this if you are running 'make' on the Login node but running code on Skylake nodes.
+# TARGET: Intel Xeon Platinum 8268 (Cascade Lake)
+# COMPILER: GCC 8.2.0 (Too old for 'cascadelake' flag)
+# STRATEGY: Use 'skylake-avx512' which is the immediate predecessor and fully compatible.
 ARCH_FLAGS = -march=skylake-avx512 -mtune=skylake-avx512
 
-# OPTION 2: Auto-detect (Best if compiling DIRECTLY on the Compute Node)
-# To use this, run: make native
+# OPTION 2: Auto-detect (Only use if compiling ON the Compute Node directly)
 NATIVE_FLAGS = -march=native -mtune=native
 
 # --- Optimization & Debug Flags ---
-# Standard high-performance flags
 COMMON_FLAGS = -O3 -std=c++17 -Wall
-# Debug flags for VTune (Frame pointer required for accurate call graphs)
 DEBUG_FLAGS  = -g -fno-omit-frame-pointer
 
-# --- Specific Flags for "Ultra" Version ---
-# These are the aggressive flags you requested for the AVX-512 serial code
+# --- Specific Flags for "Ultra" Versions ---
+# Aggressive optimization for AVX-512 (Serial & OpenMP)
+# -funroll-loops: Critical for hiding FMA latency on Xeon 8268
 ULTRA_FLAGS  = $(ARCH_FLAGS) -ffast-math -funroll-loops -finline-functions \
                -fno-trapping-math -fno-math-errno -falign-functions=32 \
                -falign-loops=32 -fno-semantic-interposition \
+               -ftree-vectorize \
                -fopt-info-vec-optimized=$(REP_DIR)/vec_report_ultra.txt
 
 # --- Libraries ---
-OMP_FLAGS = -fopenmp
-CUDA_FLAGS = -O3 -arch=sm_70 -lineinfo # Adjust sm_70 to your GPU (e.g., sm_80 for A100)
+OMP_FLAGS  = -fopenmp
+# Compute Cap 7.0 is correct for Tesla V100 (Volta)
+CUDA_FLAGS = -O3 -arch=sm_70 -lineinfo 
 
 # ==========================================
 # Targets
 # ==========================================
 
-# Default target: builds everything
-all: directories serial serial_ultra openmp mpi hybrid cuda
+all: directories serial serial_ultra openmp openmp_ultra mpi hybrid cuda
 
-# Create directories if they don't exist
 directories:
 	@mkdir -p $(BIN_DIR)
 	@mkdir -p $(REP_DIR)
 
-# 1. Serial (Standard)
+# 1. Serial
 serial: $(SRC_DIR)/nbody_serial.cpp
 	$(CXX) $(COMMON_FLAGS) $(ARCH_FLAGS) $(DEBUG_FLAGS) $< -o $(BIN_DIR)/nbody_serial
 
-# 2. Serial (ULTRA - The one with intrinsics)
+# 2. Serial Ultra (AVX-512 Intrinsics)
 serial_ultra: $(SRC_DIR)/nbody_serial_ultra.cpp
 	$(CXX) $(COMMON_FLAGS) $(ULTRA_FLAGS) $(DEBUG_FLAGS) $< -o $(BIN_DIR)/nbody_serial_ultra
 
@@ -62,34 +61,33 @@ serial_ultra: $(SRC_DIR)/nbody_serial_ultra.cpp
 openmp: $(SRC_DIR)/nbody_openmp.cpp
 	$(CXX) $(COMMON_FLAGS) $(ARCH_FLAGS) $(OMP_FLAGS) $(DEBUG_FLAGS) $< -o $(BIN_DIR)/nbody_openmp
 
-# 4. MPI
+# 4. OpenMP Ultra (AVX-512 Intrinsics + Optimized)
+openmp_ultra: $(SRC_DIR)/nbody_openmp_ultra.cpp
+	$(CXX) $(COMMON_FLAGS) $(ULTRA_FLAGS) $(OMP_FLAGS) $(DEBUG_FLAGS) $< -o $(BIN_DIR)/nbody_openmp_ultra
+
+# 5. MPI
 mpi: $(SRC_DIR)/nbody_mpi.cpp
 	$(MPICXX) $(COMMON_FLAGS) $(ARCH_FLAGS) $(DEBUG_FLAGS) $< -o $(BIN_DIR)/nbody_mpi
 
-# 5. Hybrid (MPI + OpenMP)
+# 6. Hybrid
 hybrid: $(SRC_DIR)/nbody_hybrid.cpp
 	$(MPICXX) $(COMMON_FLAGS) $(ARCH_FLAGS) $(OMP_FLAGS) $(DEBUG_FLAGS) $< -o $(BIN_DIR)/nbody_hybrid
 
-# 6. CUDA
+# 7. CUDA
 cuda: $(SRC_DIR)/nbody_cuda.cu
 	$(NVCC) $(CUDA_FLAGS) -std=c++17 $< -o $(BIN_DIR)/nbody_cuda
 
 # ==========================================
-# Special Targets
+# Utility Targets
 # ==========================================
 
-# Target: Clean up binaries
 clean:
 	rm -f $(BIN_DIR)/* $(REP_DIR)/*.txt
 
-# Target: Compile optimized for the CURRENT machine (e.g., if inside a compute node job)
-native: 
-	$(MAKE) ARCH_FLAGS="$(NATIVE_FLAGS)" all
-
-# Target: Submit a compilation job to the cluster (Slurm example)
-# Usage: make deploy_compile
+# Submit compilation to compute node (useful if Login node architecture differs too much)
 deploy_compile:
 	srun -N 1 -n 1 -p cpu --exclusive $(MAKE) native
+
 
 # ========================================== Help Target ==========================================
 help:
