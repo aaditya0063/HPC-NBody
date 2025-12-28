@@ -6,9 +6,9 @@
 #include <chrono>
 #include <string>
 #include <omp.h>
-#include <sched.h> 
-#include <set>     
-#include <iomanip> 
+#include <sched.h>
+#include <set>
+#include <iomanip>
 
 const double DT = 0.001;
 const double G = 1.0;
@@ -98,11 +98,11 @@ void update_physics(std::vector<Body>& bodies) {
 int main(int argc, char* argv[]) {
     int n_bodies = 100;
     int n_steps = 100;
-    bool benchmark_mode = false; 
+    std::string mode = "bench";
 
     if (argc >= 2) n_bodies = std::atoi(argv[1]);
     if (argc >= 3) n_steps = std::atoi(argv[2]);
-    if (argc >= 4 && std::string(argv[3]) == "true") benchmark_mode = true;
+    if (argc >= 4) mode = std::string(argv[3]);
 
     int max_threads = omp_get_max_threads();
     
@@ -117,13 +117,16 @@ int main(int argc, char* argv[]) {
     std::cout << "\n--- N-Body OpenMP Simulation ---" << std::endl;
     std::cout << "Bodies: " << n_bodies << " | Steps: " << n_steps << std::endl;
     std::cout << "Threads: " << max_threads << std::endl;
-    std::cout << "Output File: " << filename << std::endl;
+    std::cout << "Mode: " << mode << std::endl;
+    if (mode == "visual") {
+        std::cout << "Output File: " << filename << std::endl;
+    }
 
     std::vector<Body> bodies(n_bodies);
     initialize_bodies(bodies);
 
     std::ofstream outfile;
-    if (!benchmark_mode) {
+    if (mode == "visual") {
         outfile.open(filename.c_str());
         outfile << "Step,BodyID,X,Y,Z,Mass" << std::endl;
     }
@@ -131,7 +134,7 @@ int main(int argc, char* argv[]) {
     auto start_time = std::chrono::high_resolution_clock::now();
 
     for (int step = 0; step < n_steps; step++) {
-        if (!benchmark_mode && step % 1 == 0) {
+        if (mode == "visual" && step % 1 == 0) {
             for (int i = 0; i < n_bodies; i++) {
                 outfile << step << "," << i << "," 
                         << bodies[i].x << "," << bodies[i].y << "," << bodies[i].z 
@@ -145,7 +148,7 @@ int main(int argc, char* argv[]) {
     std::chrono::duration<double> elapsed = end_time - start_time;
     double total_wall_time = elapsed.count();
 
-    if (!benchmark_mode) outfile.close();
+    if (mode == "visual") outfile.close();
 
     std::cout << "\n========================================================" << std::endl;
     std::cout << "                PERFORMANCE REPORT                      " << std::endl;
