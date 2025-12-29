@@ -17,9 +17,22 @@ RESULT_DIR="vtune_reports/mpi_ultra_N${N}_ID${SLURM_JOB_ID}"
 
 # --- Modules ---
 module purge
-module load gcc/8.2.0
+module load spack
+. /home/apps/spack/share/spack/setup-env.sh
+spack find gcc
+spack load gcc@13.1.0%gcc@13.1.0
+
+module spider vtune
+module load oneapi/vtune/2021.7.1
+
+module spider openmpi
 module load openmpi/4.1.1
-module load oneapi/vtune/latest
+
+echo "Modules used:"
+gcc --version
+vtune --version
+mpicxx --version
+mpicxx -show
 
 echo "============================================"
 echo "Profiling MPI Ultra"

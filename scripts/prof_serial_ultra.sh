@@ -25,9 +25,11 @@ module load spack
 . /home/apps/spack/share/spack/setup-env.sh
 spack find gcc
 spack load gcc@13.1.0%gcc@13.1.0
-gcc --version
+
 module spider vtune
 module load oneapi/vtune/2021.7.1
+echo "Modules used:"
+gcc --version
 vtune --version
 
 echo "============================================"

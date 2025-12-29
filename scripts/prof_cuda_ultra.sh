@@ -21,8 +21,19 @@ REPORT_DIR="cuda_reports"
 
 # --- Modules ---
 module purge
-module load gcc/8.2.0
-module load cuda/11.0 
+module load spack
+. /home/apps/spack/share/spack/setup-env.sh
+spack find gcc
+spack load gcc@11.2.0
+
+module spider cuda
+module load cuda/11.0
+
+echo "Modules used:"
+gcc --version
+nvcc --version
+nsys --version
+
 
 echo "============================================"
 echo "Profiling CUDA Implementation"

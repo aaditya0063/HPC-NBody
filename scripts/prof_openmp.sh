@@ -17,8 +17,17 @@ RESULT_DIR="vtune_reports/openmp_N${N}_ID${SLURM_JOB_ID}"
 
 # --- Modules ---
 module purge
-module load gcc/8.2.0
-module load oneapi/vtune/latest
+module load spack
+. /home/apps/spack/share/spack/setup-env.sh
+spack find gcc
+spack load gcc@13.1.0%gcc@13.1.0
+
+module spider vtune
+module load oneapi/vtune/2021.7.1
+
+echo "Modules used:"
+gcc --version
+vtune --version
 
 # --- Execution ---
 export OMP_NUM_THREADS=48
