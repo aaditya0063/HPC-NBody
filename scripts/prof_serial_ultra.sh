@@ -20,8 +20,16 @@ RESULT_DIR="vtune_reports/serial_ultra_N${N}_ID${SLURM_JOB_ID}"
 
 # 3. Load Modules 
 module purge
-module load oneapi/vtune/latest
-module load gcc/8.2.0
+module purge
+module load spack
+. /home/apps/spack/share/spack/setup-env.sh
+spack find gcc
+spack load gcc@13.1.0%gcc@13.1.0
+gcc --version
+module spider vtune
+module load oneapi/vtune/2021.7.1
+vtune --version
+
 echo "============================================"
 echo "Profiling Serial Ultra Implementation"
 echo "Particles (N) : $N"
