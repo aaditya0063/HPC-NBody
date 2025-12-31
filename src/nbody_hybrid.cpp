@@ -7,6 +7,7 @@
 #include <string>
 #include <mpi.h>
 #include <omp.h>
+#include <cstring>
 
 const double DT = 0.001;
 const double G = 1.0;
@@ -44,10 +45,12 @@ int main(int argc, char* argv[]) {
     int n_bodies = 100;
     int n_steps = 1000;
     std::string mode = "bench";
+    int save_interval = 1;
 
     if (argc >= 2) n_bodies = std::atoi(argv[1]);
     if (argc >= 3) n_steps = std::atoi(argv[2]);
     if (argc >= 4) mode = std::string(argv[3]);
+    if (argc >= 5 && mode == "visual") save_interval = std::atoi(argv[4]);
 
     int threads_per_rank = omp_get_max_threads();
 
@@ -65,24 +68,10 @@ int main(int argc, char* argv[]) {
     MPI_Type_commit(&MPI_BODY_TYPE);
 
     std::ofstream outfile;
-    if (rank == 0) {
-        std::string filename = "nbody_output_hybrid_N" + std::to_string(n_bodies) 
-                             + "_S" + std::to_string(n_steps) 
-                             + "_R" + std::to_string(size) 
-                             + "_T" + std::to_string(threads_per_rank) + ".csv";
-        
-        if (mode == "visual") {
-            outfile.open(filename.c_str());
-            outfile << "Step,BodyID,X,Y,Z,Mass" << std::endl;
-        }
-        
-        std::cout << "--- Hybrid (MPI+OpenMP) Simulation Initialized ---" << std::endl;
-        std::cout << "Total MPI Ranks:   " << size << std::endl;
-        std::cout << "Threads Per Rank:  " << threads_per_rank << std::endl;
-        std::cout << "Total Cores Used:  " << size * threads_per_rank << std::endl;
-        std::cout << "Bodies: " << n_bodies << std::endl;
-        std::cout << "Mode: " << mode << std::endl;
-        if (mode == "visual") std::cout << "Output File: " << filename << std::endl;
+    if (rank == 0 && mode == "visual") {
+        std::string filename = "nbody_output_hybrid_N" + std::to_string(n_bodies) + ".csv";
+        outfile.open(filename.c_str());
+        outfile << "step,i,x,y,z,vx,vy,vz,m" << std::endl;
     }
 
     MPI_Barrier(MPI_COMM_WORLD);
@@ -90,11 +79,12 @@ int main(int argc, char* argv[]) {
 
     for (int step = 0; step < n_steps; step++) {
 
-        if (rank == 0 && mode == "visual" && step % 1 == 0) {
+        if (rank == 0 && mode == "visual" && step % save_interval == 0) {
             for (int i = 0; i < n_bodies; i++) {
                 outfile << step << "," << i << "," 
-                        << all_bodies[i].x << "," << all_bodies[i].y << "," << all_bodies[i].z 
-                        << "," << all_bodies[i].mass << "\n";
+                        << all_bodies[i].x << "," << all_bodies[i].y << "," << all_bodies[i].z << ","
+                        << all_bodies[i].vx << "," << all_bodies[i].vy << "," << all_bodies[i].vz << ","
+                        << all_bodies[i].mass << "\n";
             }
         }
 
@@ -105,14 +95,11 @@ int main(int argc, char* argv[]) {
         #pragma omp parallel for schedule(static)
         for (int i = 0; i < local_n; i++) {
             int global_i = start_index + i;
-            
             for (int j = 0; j < n_bodies; j++) {
                 if (global_i == j) continue;
-
                 double dx = all_bodies[j].x - all_bodies[global_i].x;
                 double dy = all_bodies[j].y - all_bodies[global_i].y;
                 double dz = all_bodies[j].z - all_bodies[global_i].z;
-                
                 double distSq = dx*dx + dy*dy + dz*dz + SOFTENING;
                 double dist = std::sqrt(distSq);
                 double f = (G * all_bodies[global_i].mass * all_bodies[j].mass) / (dist * dist * dist);
@@ -126,11 +113,9 @@ int main(int argc, char* argv[]) {
         #pragma omp parallel for schedule(static)
         for (int i = 0; i < local_n; i++) {
             int global_i = start_index + i;
-            
             double ax = fx[i] / all_bodies[global_i].mass;
             double ay = fy[i] / all_bodies[global_i].mass;
             double az = fz[i] / all_bodies[global_i].mass;
-
             all_bodies[global_i].vx += ax * DT;
             all_bodies[global_i].vy += ay * DT;
             all_bodies[global_i].vz += az * DT;
@@ -148,23 +133,18 @@ int main(int argc, char* argv[]) {
     double end_time = MPI_Wtime();
     double elapsed = end_time - start_time;
     double max_elapsed;
-    
     MPI_Reduce(&elapsed, &max_elapsed, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
 
     if (rank == 0) {
         if (mode == "visual") outfile.close();
-        
         double total_ops = (double)n_bodies * n_bodies * 20.0 * n_steps;
         double gflops = (total_ops / max_elapsed) / 1e9;
-
-        std::cout << "\n--- Hybrid Simulation Results ---" << std::endl;
-        std::cout << "Config: " << size << " Ranks x " << threads_per_rank << " Threads" << std::endl;
+        
         std::cout << "Time:   " << max_elapsed << " s" << std::endl;
-        std::cout << "Perf:   " << gflops << " GFLOPs" << std::endl;
+        std::cout << "GFLOPs: " << gflops << "\n";
     }
 
     MPI_Type_free(&MPI_BODY_TYPE);
     MPI_Finalize();
-
     return 0;
 }
