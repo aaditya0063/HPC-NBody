@@ -78,7 +78,7 @@ int main(int argc, char* argv[]) {
     // Default parameters
     int n_bodies = 100;
     int n_steps = 1000;
-    bool benchmark_mode = true; // Default to bench if unspecified
+    bool benchmark_mode = true; 
     int save_interval = 1;
     std::string mode_input = "bench";
 
@@ -90,26 +90,20 @@ int main(int argc, char* argv[]) {
         mode_input = std::string(argv[3]);
         if (mode_input == "visual") {
             benchmark_mode = false;
-            // Parse save interval only if in visual mode
-            if (argc >= 5) {
-                save_interval = std::atoi(argv[4]);
-            }
-        } else {
-            // Default to benchmark for "bench" or any other string
-            benchmark_mode = true;
         }
     }
-
-    std::string base_name = "_N" + std::to_string(n_bodies) + "_S" + std::to_string(n_steps) + ".csv";
-    std::string output_filename = "nbody_output_serial" + base_name;
-
-    std::cout << "\n\n--- N-Body Serial Simulation ---" << std::endl;
-    std::cout << "Bodies: " << n_bodies << " | Steps: " << n_steps << std::endl;
-    std::cout << "Mode:   " << (benchmark_mode ? "BENCHMARK (No File Output)" : "VISUALIZATION") << std::endl;
     
+    if (!benchmark_mode && argc >= 5) {
+        save_interval = std::atoi(argv[4]);
+    }
+
+    std::string output_filename = "nbody_output_serial_N" + std::to_string(n_bodies) + ".csv";
+
     if (!benchmark_mode) {
-        std::cout << "Save Interval: Every " << save_interval << " step(s)" << std::endl;
-        std::cout << "Output File:   " << output_filename << std::endl;
+        std::cout << "\n--- N-Body Serial Simulation ---" << std::endl;
+        std::cout << "Bodies: " << n_bodies << " | Steps: " << n_steps << std::endl;
+        std::cout << "Mode:   VISUALIZATION" << std::endl;
+        std::cout << "Output: " << output_filename << std::endl;
     }
 
     // 2. Initialize
@@ -120,7 +114,7 @@ int main(int argc, char* argv[]) {
     std::ofstream outfile;
     if (!benchmark_mode) {
         outfile.open(output_filename);
-        outfile << "Step,BodyID,X,Y,Z,Mass" << std::endl;
+        outfile << "step,i,x,y,z,vx,vy,vz,m" << std::endl;
     }
 
     // 4. Main Simulation Loop
@@ -132,8 +126,9 @@ int main(int argc, char* argv[]) {
         if (!benchmark_mode && (step % save_interval == 0)) {
             for (int i = 0; i < n_bodies; i++) {
                 outfile << step << "," << i << ","
-                        << bodies[i].x << "," << bodies[i].y << "," << bodies[i].z
-                        << "," << bodies[i].mass << "\n";
+                        << bodies[i].x << "," << bodies[i].y << "," << bodies[i].z << ","
+                        << bodies[i].vx << "," << bodies[i].vy << "," << bodies[i].vz << ","
+                        << bodies[i].mass << "\n";
             }
         }
 
@@ -152,10 +147,8 @@ int main(int argc, char* argv[]) {
     double total_ops = (double)n_bodies * n_bodies * 20.0 * n_steps;
     double gflops = (total_ops / time_seconds) / 1e9;
 
-    std::cout << "\n--- Results ---" << std::endl;
     std::cout << "Time:   " << time_seconds << " s" << std::endl;
-    std::cout << "Perf:   " << gflops << " GFLOPs" << std::endl;
-    // Removed the "Verify" print statement as no final state file is created.
+    std::cout << "GFLOPs: " << gflops << "\n";
 
     return 0;
 }
