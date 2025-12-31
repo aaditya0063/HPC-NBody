@@ -13,6 +13,7 @@ import numpy as np
 import argparse
 import subprocess
 import shutil
+import glob
 
 # --- Argument Parsing ---
 def parse_arguments():
@@ -33,6 +34,7 @@ def render_frame(args):
     step, df_step, output_dir, axis_limit, dpi = args
     
     # Setup Plot
+    # Fixed figsize ensures predictable dimensions (e.g., 10x100 = 1000px)
     fig = plt.figure(figsize=(10, 10), dpi=dpi)
     ax = fig.add_subplot(111, projection='3d')
     
@@ -42,13 +44,10 @@ def render_frame(args):
     ax.set_facecolor('black') 
     
     # --- Advanced Visualization: Color by Velocity ---
-    # Calculate speed v = sqrt(vx^2 + vy^2 + vz^2)
-    # If velocity data is missing, fallback to Cyan
     if {'vx', 'vy', 'vz'}.issubset(df_step.columns):
         v = np.sqrt(df_step['vx']**2 + df_step['vy']**2 + df_step['vz']**2)
-        # Normalize speed for color map (0 to 2.0 roughly)
         colors = v
-        cmap = 'plasma' # 'plasma' goes from blue/purple to orange/yellow (very sci-fi)
+        cmap = 'plasma' 
     else:
         colors = 'cyan'
         cmap = None
@@ -62,14 +61,16 @@ def render_frame(args):
     ax.set_ylim(-axis_limit, axis_limit)
     ax.set_zlim(-axis_limit, axis_limit)
     
-    ax.set_title(f"Step {int(step)}", color='white', fontsize=8)
+    ax.set_title(f"Step {int(step)}", color='white', fontsize=10)
     
     # Hide Axes for clean look
     ax.axis('off')
     
     # Save file
     filename = os.path.join(output_dir, f"frame_{int(step):05d}.png")
-    plt.savefig(filename, bbox_inches='tight', facecolor='black', pad_inches=0)
+    
+    # FIX: Removed bbox_inches='tight' to ensure even dimensions
+    plt.savefig(filename, facecolor='black', pad_inches=0)
     plt.close(fig)
     
     return filename
@@ -80,7 +81,6 @@ def main():
     print(f"--- N-Body Renderer ---")
     print(f"Input:  {args.input}")
     print(f"Output: {args.output}/")
-    print(f"Limit:  {args.limit}")
     
     # 1. Read Data
     try:
@@ -118,28 +118,32 @@ def main():
     print("\nRendering Images Complete.")
 
     # 5. Video Generation (FFmpeg)
+    # FIX: Added 'pad' filter to ensure dimensions are divisible by 2
     ffmpeg_cmd = [
-        "ffmpeg", "-y",                 # Overwrite output
-        "-framerate", str(args.fps),    # FPS
-        "-pattern_type", "glob",        # Use glob for filenames
-        "-i", f"{args.output}/*.png",   # Input pattern
-        "-c:v", "libx264",              # Codec
-        "-pix_fmt", "yuv420p",          # Pixel format for compatibility
-        "-crf", "18",                   # High quality
-        args.video                      # Output filename
+        "ffmpeg", "-y",                 
+        "-framerate", str(args.fps),    
+        "-pattern_type", "glob",        
+        "-i", f"{args.output}/*.png",   
+        "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", # SAFETY FIX
+        "-c:v", "libx264",              
+        "-pix_fmt", "yuv420p",          
+        "-crf", "18",                   
+        args.video                      
     ]
 
     print(f"Generating Video: {args.video}...")
     try:
+        # Run FFmpeg
         subprocess.run(ffmpeg_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         print(f"SUCCESS: Video saved as '{args.video}'")
     except FileNotFoundError:
-        print("Error: 'ffmpeg' not found. Please install ffmpeg or load the module.")
-        print("Images are saved, but video creation failed.")
+        print("Error: 'ffmpeg' not found. Please load the ffmpeg module.")
     except subprocess.CalledProcessError:
         print("Error: FFmpeg failed to generate video.")
+        print("Try running this command manually to debug:")
+        print(" ".join(ffmpeg_cmd))
 
-    # 6. Cleanup (Optional)
+    # 6. Cleanup
     if not args.keep_frames:
         print("Cleaning up frames...")
         shutil.rmtree(args.output)
